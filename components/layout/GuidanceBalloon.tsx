@@ -156,7 +156,7 @@ const GuidanceBalloon: React.FC<GuidanceBalloonProps> = ({
               })}
             </div>
 
-            {stage.action && (
+            {stage.action && activeView !== stage.view && (
               <button 
                 onClick={() => onNavigate(stage.view!)}
                 className={`

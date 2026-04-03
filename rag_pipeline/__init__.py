@@ -2,6 +2,7 @@
 
 from .chunking import chunk_text
 from .embeddings import generate_embeddings, generate_query_embedding
+from .evaluation import compute_retrieval_accuracy
 from .models import (
     Chunk,
     ChunkingMethod,
@@ -9,7 +10,9 @@ from .models import (
     ChunkResult,
     ChunkStats,
     FileType,
+    RetrievalAccuracy,
     RetrievalMethod,
+    SearchResponse,
     SearchResult,
     VectorCollection,
 )
@@ -20,6 +23,7 @@ from .similarity import compute_bm25, cosine_similarity
 __all__ = [
     "chunk_text",
     "compute_bm25",
+    "compute_retrieval_accuracy",
     "cosine_similarity",
     "generate_embeddings",
     "generate_query_embedding",
@@ -34,7 +38,9 @@ __all__ = [
     "ChunkResult",
     "ChunkStats",
     "FileType",
+    "RetrievalAccuracy",
     "RetrievalMethod",
+    "SearchResponse",
     "SearchResult",
     "VectorCollection",
 ]

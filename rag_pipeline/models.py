@@ -77,3 +77,45 @@ class SearchResult(BaseModel):
     collection_name: str
     collection_id: str
     embedding_model: str | None = None
+
+
+class RetrievalAccuracy(BaseModel):
+    """Retrieval quality vs labelled relevant chunk ids (same query)."""
+
+    k: int = Field(description="Number of ranked results evaluated (list length).")
+    precision_at_k: float = Field(
+        ge=0.0,
+        le=1.0,
+        description="Fraction of top-k results that are relevant.",
+    )
+    recall_at_k: float = Field(
+        ge=0.0,
+        le=1.0,
+        description="Fraction of labelled relevant chunks that appear in top-k.",
+    )
+    mean_reciprocal_rank: float = Field(
+        ge=0.0,
+        le=1.0,
+        description="Reciprocal rank of the first relevant hit (0 if none).",
+    )
+    ndcg_at_k: float = Field(
+        ge=0.0,
+        le=1.0,
+        description="Normalized discounted cumulative gain (binary relevance).",
+    )
+    hit_at_k: bool = Field(description="Whether at least one relevant chunk is in top-k.")
+    relevant_in_top_k: int = Field(ge=0, description="Count of relevant chunks in top-k.")
+    total_labelled_relevant: int = Field(
+        ge=0,
+        description="Number of chunk ids supplied as relevant for this query.",
+    )
+
+
+class SearchResponse(BaseModel):
+    """Ranked hits plus optional accuracy when ground-truth chunk ids are provided."""
+
+    results: list[SearchResult]
+    accuracy: RetrievalAccuracy | None = Field(
+        default=None,
+        description="Set when `relevant_chunk_ids` is passed to `search`.",
+    )

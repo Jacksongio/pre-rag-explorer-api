@@ -1,6 +1,9 @@
 from __future__ import annotations
 
-from .models import RetrievalMethod, SearchResult, VectorCollection
+from collections.abc import Collection
+
+from .evaluation import compute_retrieval_accuracy
+from .models import RetrievalMethod, SearchResponse, SearchResult, VectorCollection
 from .similarity import compute_bm25, cosine_similarity
 
 
@@ -85,8 +88,13 @@ def search(
     methods: list[RetrievalMethod | str] | None = None,
     top_k: int = 5,
     dense_weight: float = 0.7,
-) -> list[SearchResult]:
-    """Run one or more retrieval methods across collections and return ranked results."""
+    relevant_chunk_ids: Collection[str] | None = None,
+) -> SearchResponse:
+    """Run one or more retrieval methods across collections and return ranked results.
+
+    Pass ``relevant_chunk_ids`` (chunk ``id`` values that should match the query) to
+    attach :class:`~rag_pipeline.models.RetrievalAccuracy` on the response.
+    """
     if methods is None:
         methods = [RetrievalMethod.DENSE]
     methods = [RetrievalMethod(m) for m in methods]
@@ -104,4 +112,12 @@ def search(
             )
 
     all_results.sort(key=lambda r: r.score, reverse=True)
-    return all_results[: top_k * len(methods)]
+    trimmed = all_results[: top_k * len(methods)]
+
+    accuracy = None
+    if relevant_chunk_ids is not None:
+        rel = set(relevant_chunk_ids)
+        if rel:
+            accuracy = compute_retrieval_accuracy(trimmed, rel)
+
+    return SearchResponse(results=trimmed, accuracy=accuracy)

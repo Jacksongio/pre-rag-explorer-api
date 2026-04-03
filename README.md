@@ -30,6 +30,8 @@ A comprehensive Pre-RAG prototype dashboard for document parsing, multi-method c
 
 ## Quick Start
 
+### Web Dashboard
+
 **Prerequisites:** Node.js (v18+)
 
 ```bash
@@ -41,6 +43,66 @@ npm run dev
 ```
 
 The app will be available at `http://localhost:5173`
+
+### Chat with Your Documents in the CLI
+
+You can also run the Python RAG pipeline from the terminal and chat with uploaded documents.
+
+#### 1) Install Python dependencies
+
+```bash
+python -m venv venv
+source venv/bin/activate
+pip install -r requirements-dev.txt
+```
+
+#### 2) Start an LLM backend
+
+For **Ollama** (recommended locally):
+
+```bash
+ollama pull llama3
+ollama serve
+```
+
+For **OpenAI**:
+
+```bash
+export OPENAI_API_KEY=your_api_key_here
+```
+
+#### 3) Run the CLI
+
+```bash
+python main.py docs/sample_doc_scanned.pdf --llm-backend ollama --llm-model llama3
+```
+
+By default, the CLI now **auto-selects the chunking method per document** and **auto-selects the retrieval method per query**. You can still override them with `--chunk-method` and `--retrieval` if needed.
+
+Or start empty and add files interactively:
+
+```bash
+python main.py --llm-backend ollama --llm-model llama3
+```
+
+#### 4) Chat commands
+
+Once the CLI starts, use:
+
+- `/add <file>` — ingest a new document
+- `/collections` — list loaded collections
+- `/quit` — exit the session
+- Any other text — treated as a question about the loaded docs
+
+Example:
+
+```text
+>> What is this document about?
+>> Summarize the key lease terms.
+>> /collections
+```
+
+> **Note:** `docs/sample_doc_scanned.pdf` is a scanned PDF. If the file contains little extractable text, answers may be limited unless OCR is added.
 
 ---
 

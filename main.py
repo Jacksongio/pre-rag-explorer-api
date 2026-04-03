@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import argparse
 import os
-import sys
+import re
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -62,12 +62,63 @@ def ask_llm(prompt: str, *, backend: str, model: str) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Automatic strategy selection
+# ---------------------------------------------------------------------------
+
+def choose_chunk_method(file_path: str, text: str) -> ChunkingMethod:
+    """Pick a chunking strategy from basic document heuristics."""
+    suffix = Path(file_path).suffix.lower()
+    stripped = text.strip()
+    nonempty_lines = [line.strip() for line in text.splitlines() if line.strip()]
+    paragraph_count = len([p for p in re.split(r"\n\s*\n", text) if p.strip()])
+    sentence_count = len(re.findall(r"[.!?]+", text))
+    avg_line_length = (
+        sum(len(line) for line in nonempty_lines) / len(nonempty_lines)
+        if nonempty_lines
+        else 0.0
+    )
+
+    if suffix == ".csv":
+        return ChunkingMethod.FIXED
+    if suffix in {".md", ".markdown"}:
+        return ChunkingMethod.RECURSIVE
+    if len(stripped) < 600:
+        return ChunkingMethod.SENTENCE if sentence_count >= 3 else ChunkingMethod.FIXED
+    if paragraph_count >= 4 or "#" in text or avg_line_length < 120:
+        return ChunkingMethod.RECURSIVE
+    if len(stripped) > 12000:
+        return ChunkingMethod.TOKEN
+    return ChunkingMethod.RECURSIVE
+
+
+def choose_retrieval_method(
+    query: str,
+    collections: list[VectorCollection],
+) -> RetrievalMethod:
+    """Pick retrieval based on query style and collection size."""
+    query_terms = [t for t in re.split(r"\W+", query.lower()) if t]
+    total_chunks = sum(collection.chunk_count for collection in collections)
+    has_exact_match_intent = (
+        len(query_terms) <= 3
+        or any(char.isdigit() for char in query)
+        or '"' in query
+        or ":" in query
+    )
+
+    if total_chunks <= 3:
+        return RetrievalMethod.DENSE
+    if has_exact_match_intent:
+        return RetrievalMethod.HYBRID if total_chunks >= 8 else RetrievalMethod.SPARSE
+    return RetrievalMethod.HYBRID if total_chunks >= 5 else RetrievalMethod.DENSE
+
+
+# ---------------------------------------------------------------------------
 # Document ingestion
 # ---------------------------------------------------------------------------
 
 def ingest_file(
     file_path: str,
-    chunk_method: ChunkingMethod,
+    chunk_method: ChunkingMethod | str,
     chunk_params: ChunkParams,
     embedding_model: str,
 ) -> VectorCollection:
@@ -79,7 +130,15 @@ def ingest_file(
     text = parse_file(path.name, content)
     print(f"  Parsed {path.name} ({len(text)} chars)")
 
-    result = chunk_text(text, chunk_method, chunk_params)
+    selected_chunk_method = (
+        choose_chunk_method(path.name, text)
+        if str(chunk_method) == "auto"
+        else ChunkingMethod(chunk_method)
+    )
+    if str(chunk_method) == "auto":
+        print(f"  Auto-selected chunk method: {selected_chunk_method.value}")
+
+    result = chunk_text(text, selected_chunk_method, chunk_params)
     print(f"  Chunked into {result.stats.count} chunks (avg {result.stats.avg_size:.0f} chars)")
 
     file_id = str(uuid.uuid4())
@@ -91,7 +150,7 @@ def ingest_file(
             index=i,
             source_file_id=file_id,
             source_file_name=path.name,
-            chunk_method=chunk_method,
+            chunk_method=selected_chunk_method,
         )
         for i, chunk in enumerate(result.chunks)
     ]
@@ -103,7 +162,7 @@ def ingest_file(
     return VectorCollection(
         id=collection_id,
         name=path.stem,
-        chunk_method=chunk_method,
+        chunk_method=selected_chunk_method,
         source_file_id=file_id,
         source_file_name=path.name,
         chunk_count=len(chunks),
@@ -135,18 +194,26 @@ def run_query(
     collections: list[VectorCollection],
     *,
     embedding_model: str,
-    retrieval_method: RetrievalMethod,
+    retrieval_method: RetrievalMethod | str,
     top_k: int,
     llm_backend: str,
     llm_model: str,
 ) -> None:
     query_embedding = generate_query_embedding(query, model_name=embedding_model)
+    selected_retrieval_method = (
+        choose_retrieval_method(query, collections)
+        if str(retrieval_method) == "auto"
+        else RetrievalMethod(retrieval_method)
+    )
+
+    if str(retrieval_method) == "auto":
+        print(f"  Auto-selected retrieval method: {selected_retrieval_method.value}")
 
     response = search(
         query=query,
         query_embedding=query_embedding,
         collections=collections,
-        methods=[retrieval_method],
+        methods=[selected_retrieval_method],
         top_k=top_k,
     )
 
@@ -173,7 +240,11 @@ def run_query(
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="RAG Pipeline CLI — upload documents and ask questions with retrieval-augmented generation.",
+        description=(
+            "RAG Pipeline CLI — upload documents and ask questions with "
+            "retrieval-augmented generation. Defaults now auto-pick chunking "
+            "per document and retrieval per query."
+        ),
     )
     parser.add_argument(
         "files",
@@ -182,9 +253,9 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--chunk-method",
-        choices=[m.value for m in ChunkingMethod],
-        default="recursive",
-        help="Chunking strategy (default: recursive)",
+        choices=["auto", *[m.value for m in ChunkingMethod]],
+        default="auto",
+        help="Chunking strategy (default: auto)",
     )
     parser.add_argument("--chunk-size", type=int, default=1000, help="Chunk size in characters (default: 1000)")
     parser.add_argument("--overlap", type=int, default=200, help="Chunk overlap (default: 200)")
@@ -195,9 +266,9 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--retrieval",
-        choices=[m.value for m in RetrievalMethod],
-        default="dense",
-        help="Retrieval method (default: dense)",
+        choices=["auto", *[m.value for m in RetrievalMethod]],
+        default="auto",
+        help="Retrieval method (default: auto)",
     )
     parser.add_argument("--top-k", type=int, default=5, help="Number of chunks to retrieve (default: 5)")
     parser.add_argument(
@@ -221,9 +292,9 @@ def main() -> None:
     if args.llm_model == "llama3" and args.llm_backend == "openai":
         args.llm_model = "gpt-4o"
 
-    chunk_method = ChunkingMethod(args.chunk_method)
+    chunk_method: ChunkingMethod | str = args.chunk_method
     chunk_params = ChunkParams(chunk_size=args.chunk_size, overlap=args.overlap)
-    retrieval_method = RetrievalMethod(args.retrieval)
+    retrieval_method: RetrievalMethod | str = args.retrieval
 
     collections: list[VectorCollection] = []
 
